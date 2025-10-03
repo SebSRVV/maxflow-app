@@ -1,0 +1,15 @@
+# mi IDE
+.idea/
+/target/
+/out/
+/build/
+*.iml
+*.iws
+.DS_Store
+Thumbs.db
+*.log
+log/
+temp/
+.idea/libraries
+.gradle
+/build/
