@@ -167,7 +167,7 @@ class Aplicacion(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Flujo Máximo (Edmonds–Karp) — Modo iterativo")
-        self.geometry("1240x780")
+        self.geometry("1440x980")
         self.configure(bg="#F5F7FB")
 
         self.modelo = ModeloGrafo()
