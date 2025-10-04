@@ -73,12 +73,12 @@ class FlujoMaximoEK:
         return {i for i,ok in enumerate(vis) if ok}
 
 
-# Modelo de grafo
+# modelo de grafo
 RADIO_NODO = 20
 
 class ModeloGrafo:
     def __init__(self):
-        self.nodos = []          # [(x,y,nombre)]
+        self.nodos = []          # [(x,y,nombre)] coords de mundo
         self.arcos = []          # [(u,v,cap)]
         self.nombre_a_id = {}
         self.siguiente_idx_nombre = 0
@@ -154,12 +154,12 @@ class ModeloGrafo:
                 except: pass
 
 
-# Interfaz Tkinter
+# interfaz tkinter
 class Aplicacion(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Flujo Máximo (Edmonds–Karp)")
-        self.geometry("1280x820")
+        self.title("MaxFlow App")
+        self.geometry("1920x1080")
         self.configure(bg="#F5F7FB")
 
         self.modelo = ModeloGrafo()
@@ -170,15 +170,32 @@ class Aplicacion(tk.Tk):
         self.ultimo_valor = 0.0
         self.iteraciones = []
         self.corte_S = set()
-        self.corte_linea = None  # (p1, p2) para la línea punteada
+        self.corte_linea = None
 
         self.arco_pendiente_desde = None
+
+        # transformaciones y navegacion
+        self.zoom = 1.0
+        self.offset = [0.0, 0.0]
+        self.paneando = False
+        self.pan_origen = (0, 0)
+        self.offset_ini = (0.0, 0.0)
         self.nodo_arrastre = None
-        self.offset_arrastre = (0,0)
+        self.offset_arrastre_world = (0.0, 0.0)
+
+        # estado para paneo con espacio
+        self.space_down = False
 
         self._construir_ui()
         self._vincular_eventos()
         self.redibujar()
+
+    # util transformacion mundo↔pantalla
+    def w2s(self, x, y):
+        return x * self.zoom + self.offset[0], y * self.zoom + self.offset[1]
+
+    def s2w(self, sx, sy):
+        return (sx - self.offset[0]) / self.zoom, (sy - self.offset[1]) / self.zoom
 
     def _construir_ui(self):
         estilo = ttk.Style(self)
@@ -259,44 +276,69 @@ class Aplicacion(tk.Tk):
 
         ley = ttk.Frame(lateral); ley.grid(row=22, column=0, sticky="ew", pady=(8,0))
         ttk.Label(ley, text="🚩 Inicio   🏁 Destino   📦 Intermedio", style="Tag.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(ley, text="Naranja: con flujo  •  Gris: sin flujo  •  Línea punteada: corte mínimo", style="Tag.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Label(ley, text="naranja: con flujo  •  gris: sin flujo  •  linea punteada: corte minimo  •  rueda: zoom  •  medio/derecho o espacio+izquierdo: pan", style="Tag.TLabel").grid(row=1, column=0, sticky="w")
 
         ttk.Button(lateral, text="🔎 Ver todas las rutas (resumen)", command=self.mostrar_rutas).grid(row=23, column=0, sticky="w", pady=(10,0))
 
     def _vincular_eventos(self):
+        # click izquierdo habitual
         self.lienzo.bind("<Button-1>", self._click_lienzo)
         self.lienzo.bind("<B1-Motion>", self._arrastrar_lienzo)
         self.lienzo.bind("<ButtonRelease-1>", self._soltar_lienzo)
 
-    # Grafico
+        # paneo con boton medio o derecho
+        self.lienzo.bind("<Button-2>", self._pan_inicio)
+        self.lienzo.bind("<B2-Motion>", self._pan_mover)
+        self.lienzo.bind("<ButtonRelease-2>", self._pan_fin)
+        self.lienzo.bind("<Button-3>", self._pan_inicio)
+        self.lienzo.bind("<B3-Motion>", self._pan_mover)
+        self.lienzo.bind("<ButtonRelease-3>", self._pan_fin)
+
+        # zoom rueda
+        self.lienzo.bind("<MouseWheel>", self._on_mousewheel)
+        self.lienzo.bind("<Button-4>", lambda e: self._zoom_en_cursor(e, +1))
+        self.lienzo.bind("<Button-5>", lambda e: self._zoom_en_cursor(e, -1))
+
+        # atajos de teclado
+        self.bind("+", lambda e: self._zoom_centrado(+1))
+        self.bind("-", lambda e: self._zoom_centrado(-1))
+        self.bind("=", lambda e: self._zoom_centrado(+1))
+
+        # paneo con espacio: presionar y soltar
+        self.bind("<KeyPress-space>", self._space_press)
+        self.bind("<KeyRelease-space>", self._space_release)
+
+    # grafico
     def _dibujar_cuadricula(self):
         self.lienzo.delete("grid")
         w = self.lienzo.winfo_width(); h = self.lienzo.winfo_height()
-        paso = 24
-        for x in range(0, w, paso):
+        paso_world = 24
+        paso = max(8, int(paso_world * self.zoom))
+        if paso <= 0: paso = 8
+        ox = int(self.offset[0]) % paso
+        oy = int(self.offset[1]) % paso
+        for x in range(ox, w, paso):
             self.lienzo.create_line(x,0,x,h, fill="#f0f2f6", tags="grid")
-        for y in range(0, h, paso):
+        for y in range(oy, h, paso):
             self.lienzo.create_line(0,y,w,y, fill="#f0f2f6", tags="grid")
 
     def redibujar(self):
         self.lienzo.delete("all")
         self._dibujar_cuadricula()
 
-        # arcos
         for (u,v,cap) in self.modelo.arcos:
             self._dibujar_arco(u,v,cap)
 
-        # corte mínimo (solo línea punteada): mediatriz entre centroides S y T
         if self.corte_S and len(self.corte_S) < len(self.modelo.nodos):
             p1, p2 = self._linea_corte_mediatriz(self.corte_S)
             if p1 and p2:
-                self.lienzo.create_line(p1[0], p1[1], p2[0], p2[1],
+                p1s = self.w2s(*p1); p2s = self.w2s(*p2)
+                self.lienzo.create_line(p1s[0], p1s[1], p2s[0], p2s[1],
                                         dash=(6,4), width=2, fill="#6C757D")
-                mx = (p1[0]+p2[0])/2; my = (p1[1]+p2[1])/2
+                mx = (p1s[0]+p2s[0])/2; my = (p1s[1]+p2s[1])/2
                 self.lienzo.create_text(mx+8, my-8, text="Corte mínimo",
                                         anchor="w", fill="#6C757D", font=("Segoe UI", 9, "bold"))
 
-        # nodos
         for i,(x,y,nombre) in enumerate(self.modelo.nodos):
             self._dibujar_nodo(i,x,y,nombre)
 
@@ -309,15 +351,17 @@ class Aplicacion(tk.Tk):
         return "📦"
 
     def _dibujar_nodo(self, nid, x, y, nombre):
-        self.lienzo.create_oval(x-RADIO_NODO-2, y-RADIO_NODO-2, x+RADIO_NODO+2, y+RADIO_NODO+2,
+        sx, sy = self.w2s(x, y)
+        r = max(6, RADIO_NODO * self.zoom)
+        self.lienzo.create_oval(sx-r-2, sy-r-2, sx+r+2, sy+r+2,
                                 fill="#E9F2FF", outline="", tags=f"nodo_{nid}")
         color = "#0D6EFD"
         if nid == self.id_inicio: color = "#198754"
         elif nid == self.id_destino: color = "#DC3545"
-        self.lienzo.create_oval(x-RADIO_NODO, y-RADIO_NODO, x+RADIO_NODO, y+RADIO_NODO, fill=color, outline="#1b1b1b",
+        self.lienzo.create_oval(sx-r, sy-r, sx+r, sy+r, fill=color, outline="#1b1b1b",
                                 width=1.5, tags=f"nodo_{nid}")
-        self.lienzo.create_text(x, y-2, text=self._icono_nodo(nid), font=("Segoe UI Emoji", 12), fill="white")
-        self.lienzo.create_text(x, y+12, text=nombre, fill="white", font=("Segoe UI", 9, "bold"))
+        self.lienzo.create_text(sx, sy-2, text=self._icono_nodo(nid), font=("Segoe UI Emoji", 12), fill="white")
+        self.lienzo.create_text(sx, sy+12, text=nombre, fill="white", font=("Segoe UI", 9, "bold"))
 
     def _coords_arco(self, u, v):
         x1,y1,_ = self.modelo.nodos[u]; x2,y2,_ = self.modelo.nodos[v]
@@ -337,20 +381,23 @@ class Aplicacion(tk.Tk):
 
     def _dibujar_arco(self, u, v, capacidad):
         sx,sy,ex,ey,_ = self._coords_arco(u,v)
+        ssx, ssy = self.w2s(sx, sy)
+        eex, eey = self.w2s(ex, ey)
         flujo = self.ultimo_flujo.get((u,v), 0.0)
 
         color = "#FF8C00" if flujo > 1e-12 else "#5f6368"
-        grosor = max(2, min(10, int(2 + math.log2(flujo+1)*4))) if flujo > 1e-12 else 2
+        base = 2 + (math.log2(flujo+1)*4 if flujo > 1e-12 else 0)
+        grosor = max(2, min(10, int(base)))
+        arrow = (12*self.zoom, 14*self.zoom, 5*self.zoom)
 
-        self.lienzo.create_line(sx,sy,ex,ey, arrow=tk.LAST, width=grosor, fill=color, smooth=True,
-                                arrowshape=(12,14,5), tags=f"arco_{u}_{v}")
+        self.lienzo.create_line(ssx,ssy,eex,eey, arrow=tk.LAST, width=grosor, fill=color, smooth=True,
+                                arrowshape=arrow, tags=f"arco_{u}_{v}")
 
-        midx, midy = (sx+ex)/2, (sy+ey)/2
+        midx, midy = (ssx+eex)/2, (ssy+eey)/2
         etiqueta = f"{capacidad:g}"
         self.lienzo.create_rectangle(midx-4, midy-18, midx+4+7*len(etiqueta)/2, midy-2, fill="#ffffff", outline="", stipple="gray25")
         self.lienzo.create_text(midx+2, midy-10, text=etiqueta, fill="#111", font=("Segoe UI", 9))
 
-        # ====== Detalle por fases con colores en corchetes y coma ======
         palette = ["#6f42c1", "#0d6efd", "#198754", "#fd7e14", "#d63384", "#20c997", "#845ef7", "#12b886"]
         totales = self._log_acumulado_arco(u, v)
         if totales:
@@ -358,24 +405,17 @@ class Aplicacion(tk.Tk):
             nombre_u = self.modelo.nodos[u][2]
             for i, total in enumerate(totales):
                 col = palette[i % len(palette)]
-                # [nombre,  <numero> ]
-                # parte1: '['
                 self.lienzo.create_text(midx, midy+yoff, text="[", fill=col, font=("Consolas", 9), anchor="w")
                 x1 = midx + 7*1
-                # parte2: nombre
                 self.lienzo.create_text(x1, midy+yoff, text=nombre_u, fill="#444", font=("Consolas", 9), anchor="w")
                 x2 = x1 + 7*len(nombre_u)
-                # parte3: ','
                 self.lienzo.create_text(x2, midy+yoff, text=",", fill=col, font=("Consolas", 9), anchor="w")
-                x3 = x2 + 7*1 + 7*1  # coma + espacio
-                # parte4: numero (rojo)
+                x3 = x2 + 7*2
                 num_txt = f"{total:g}"
                 self.lienzo.create_text(x3, midy+yoff, text=num_txt, fill="#DC3545", font=("Consolas", 9, "bold"), anchor="w")
                 x4 = x3 + 7*len(num_txt)
-                # parte5: ']'
                 self.lienzo.create_text(x4, midy+yoff, text="]", fill=col, font=("Consolas", 9), anchor="w")
                 yoff += 14
-        # ===============================================================
 
     def _refrescar_combos_nodo(self):
         nombres = [n[2] for n in self.modelo.nodos]
@@ -393,66 +433,63 @@ class Aplicacion(tk.Tk):
         for (u,v,c) in self.modelo.arcos:
             self.tabla.insert("", "end", values=(self.modelo.nodos[u][2], self.modelo.nodos[v][2], f"{c:g}"))
 
-    # ---------- Corte (línea punteada diagonal) ----------
+    # corte minimo en mundo
     def _linea_corte_mediatriz(self, Sset):
-        """Devuelve dos puntos (p1,p2) de la mediatriz entre centroides de S y T dentro del canvas."""
         if not self.modelo.nodos: return None, None
         Tset = [i for i in range(len(self.modelo.nodos)) if i not in Sset]
         if not Sset or not Tset: return None, None
-
-        # centroides
         sx = sum(self.modelo.nodos[i][0] for i in Sset)/len(Sset)
         sy = sum(self.modelo.nodos[i][1] for i in Sset)/len(Sset)
         tx = sum(self.modelo.nodos[i][0] for i in Tset)/len(Tset)
         ty = sum(self.modelo.nodos[i][1] for i in Tset)/len(Tset)
-
-        # si coinciden (raro), fallback vertical entre masas
         if abs(sx-tx) < 1e-6 and abs(sy-ty) < 1e-6:
             w = self.lienzo.winfo_width(); h = self.lienzo.winfo_height()
-            xm = sx
-            return (xm, 10), (xm, h-10)
-
-        # vector entre centroides
+            xm, _ = self.s2w(sx, 0)
+            return (xm, 0), (xm, h)
         vx, vy = tx - sx, ty - sy
-        # mediatriz: pasa por punto medio y es perpendicular => dirección (-vy, vx)
         mx, my = (sx+tx)/2, (sy+ty)/2
         dx, dy = -vy, vx
-        # normalizar
         norm = math.hypot(dx, dy)
         if norm < 1e-9: dx, dy = 1.0, 0.0
         else: dx, dy = dx/norm, dy/norm
-
-        # extender a bordes del canvas
         w = self.lienzo.winfo_width(); h = self.lienzo.winfo_height()
-        L = max(w, h) * 2
-        p1 = (mx - dx*L, my - dy*L)
-        p2 = (mx + dx*L, my + dy*L)
-        return p1, p2
+        L = max(w, h) / self.zoom * 2.0
+        return (mx - dx*L, my - dy*L), (mx + dx*L, my + dy*L)
 
-    # ---------- Interacción ----------
-    def _buscar_nodo_en(self, x, y):
+    # busquedas hit test
+    def _buscar_nodo_en(self, sx, sy):
+        x, y = self.s2w(sx, sy)
+        r2 = (RADIO_NODO + 2)**2
         for i,(nx,ny,_) in enumerate(self.modelo.nodos):
-            if (nx-x)**2 + (ny-y)**2 <= (RADIO_NODO+2)**2:
+            if (nx-x)**2 + (ny-y)**2 <= r2:
                 return i
         return None
 
-    def _buscar_arco_en(self, x, y):
+    def _buscar_arco_en(self, sx, sy):
         mejor=None; mejor_d=8.0
         for (u,v,_) in self.modelo.arcos:
-            sx,sy,ex,ey,_ = self._coords_arco(u,v)
-            dx,dy = ex-sx, ey-sy
+            wx1,wy1,wx2,wy2,_ = self._coords_arco(u,v)
+            x1,y1 = self.w2s(wx1,wy1); x2,y2 = self.w2s(wx2,wy2)
+            dx,dy = x2-x1, y2-y1
             if abs(dx)<1e-9 and abs(dy)<1e-9: continue
-            t = max(0, min(1, ((x-sx)*dx + (y-sy)*dy)/(dx*dx+dy*dy)))
-            qx,qy = sx + t*dx, sy + t*dy
-            d = math.hypot(x-qx, y-qy)
+            t = max(0, min(1, ((sx-x1)*dx + (sy-y1)*dy)/(dx*dx+dy*dy)))
+            qx,qy = x1 + t*dx, y1 + t*dy
+            d = math.hypot(sx-qx, sy-qy)
             if d < mejor_d: mejor_d=d; mejor=(u,v)
         return mejor
 
+    # interaccion principal con soporte de espacio para pan
     def _click_lienzo(self, e):
+        # si se mantiene espacio, iniciar paneo con izquierdo
+        if self.space_down:
+            self._pan_inicio(e)
+            return
+
         modo = self.modo_var.get()
         if modo == "agregar_nodo":
             try:
-                self.modelo.agregar_nodo(e.x, e.y, None)
+                wx, wy = self.s2w(e.x, e.y)
+                self.modelo.agregar_nodo(wx, wy, None)
                 self._limpiar_resultados(); self.redibujar()
             except Exception as ex: messagebox.showerror("Error", str(ex))
         elif modo == "agregar_arco":
@@ -473,8 +510,9 @@ class Aplicacion(tk.Tk):
         elif modo == "mover_nodo":
             self.nodo_arrastre = self._buscar_nodo_en(e.x, e.y)
             if self.nodo_arrastre is not None:
-                x,y,_ = self.modelo.nodos[self.nodo_arrastre]
-                self.offset_arrastre = (e.x-x, e.y-y)
+                wx, wy = self.s2w(e.x, e.y)
+                nx, ny, _ = self.modelo.nodos[self.nodo_arrastre]
+                self.offset_arrastre_world = (wx - nx, wy - ny)
         elif modo == "eliminar":
             nid = self._buscar_nodo_en(e.x, e.y)
             if nid is not None:
@@ -495,17 +533,83 @@ class Aplicacion(tk.Tk):
             if nid is not None: self._dialogo_renombrar_nodo(nid)
 
     def _arrastrar_lienzo(self, e):
+        # si espacio presionado, pan con izquierdo durante el arrastre
+        if self.space_down and self.paneando:
+            self._pan_mover(e)
+            return
         if self.modo_var.get()=="mover_nodo" and self.nodo_arrastre is not None:
-            dx,dy = self.offset_arrastre
-            x = max(RADIO_NODO+4, min(self.lienzo.winfo_width()-RADIO_NODO-4, e.x-dx))
-            y = max(RADIO_NODO+4, min(self.lienzo.winfo_height()-RADIO_NODO-4, e.y-dy))
-            self.modelo.mover_nodo(self.nodo_arrastre, x, y)
+            wx, wy = self.s2w(e.x, e.y)
+            dx, dy = self.offset_arrastre_world
+            nx = wx - dx
+            ny = wy - dy
+            sx, sy = self.w2s(nx, ny)
+            r = RADIO_NODO * self.zoom + 4
+            sx = max(r, min(self.lienzo.winfo_width()-r, sx))
+            sy = max(r, min(self.lienzo.winfo_height()-r, sy))
+            nx, ny = self.s2w(sx, sy)
+            self.modelo.mover_nodo(self.nodo_arrastre, nx, ny)
             self.redibujar()
 
-    def _soltar_lienzo(self, _e):
+    def _soltar_lienzo(self, e):
+        # terminar paneo si venia con espacio+izquierdo
+        if self.space_down and self.paneando:
+            self._pan_fin(e)
+            return
         self.nodo_arrastre=None
 
-    # ---------- Diálogos ----------
+    # paneo comun (medio/derecho o espacio+izquierdo)
+    def _pan_inicio(self, e):
+        self.paneando = True
+        self.pan_origen = (e.x, e.y)
+        self.offset_ini = (self.offset[0], self.offset[1])
+        self.lienzo.configure(cursor="fleur")
+
+    def _pan_mover(self, e):
+        if not self.paneando: return
+        dx = e.x - self.pan_origen[0]
+        dy = e.y - self.pan_origen[1]
+        self.offset[0] = self.offset_ini[0] + dx
+        self.offset[1] = self.offset_ini[1] + dy
+        self.redibujar()
+
+    def _pan_fin(self, _e):
+        self.paneando = False
+        self.lienzo.configure(cursor="")
+
+    # zoom
+    def _on_mousewheel(self, e):
+        direction = 1 if e.delta > 0 else -1
+        self._zoom_en_cursor(e, direction)
+
+    def _zoom_en_cursor(self, e, direction):
+        old_zoom = self.zoom
+        factor = 1.1 if direction > 0 else (1/1.1)
+        new_zoom = max(0.3, min(4.0, old_zoom * factor))
+        if abs(new_zoom - old_zoom) < 1e-6:
+            return
+        wx, wy = self.s2w(e.x, e.y)
+        self.zoom = new_zoom
+        self.offset[0] = e.x - wx * self.zoom
+        self.offset[1] = e.y - wy * self.zoom
+        self.redibujar()
+
+    def _zoom_centrado(self, direction):
+        cx = self.lienzo.winfo_width()//2
+        cy = self.lienzo.winfo_height()//2
+        dummy = type("E", (), {"x": cx, "y": cy})
+        self._zoom_en_cursor(dummy, direction)
+
+    # teclado espacio para pan
+    def _space_press(self, _e):
+        self.space_down = True
+        self.lienzo.configure(cursor="fleur")
+
+    def _space_release(self, _e):
+        self.space_down = False
+        if not self.paneando:
+            self.lienzo.configure(cursor="")
+
+    # dialogos
     def _dialogo_renombrar_nodo(self, nid):
         win = tk.Toplevel(self); win.title("Renombrar nodo")
         ttk.Label(win, text="Nuevo nombre:").grid(row=0, column=0, padx=8, pady=8)
@@ -540,7 +644,7 @@ class Aplicacion(tk.Tk):
             except Exception as ex: messagebox.showerror("Error", str(ex))
         ttk.Button(win, text="Guardar", command=ok).grid(row=2, column=0, columnspan=2, pady=8)
 
-    # ---------- Acciones ----------
+    # acciones
     def establecer_inicio(self):
         nombre = self.combo_inicio.get()
         if not nombre: return
@@ -585,6 +689,7 @@ class Aplicacion(tk.Tk):
         tree_res.heading("iters", text="Veces")
         tree_res.column("ruta", width=520, anchor="w")
         tree_res.column("flujo", width=130, anchor="e")
+        self.lienzo.update_idletasks()
         tree_res.column("iters", width=90, anchor="center")
         tree_res.pack(fill="both", expand=True, padx=10)
         for ruta, info in resumen.items():
@@ -609,12 +714,8 @@ class Aplicacion(tk.Tk):
             self.ultimo_valor = valor
             self.iteraciones = iteraciones
             self.lbl_resultado.config(text=f"Flujo máximo: {valor:g}")
-
             self._actualizar_desglose_panel()
-
-            # corte mínimo (solo línea punteada)
             self.corte_S = FlujoMaximoEK.alcanzables_en_residual(ek.residual, self.id_inicio)
-
             self.redibujar()
         except Exception as ex:
             messagebox.showerror("Error", str(ex))
@@ -664,22 +765,5 @@ class Aplicacion(tk.Tk):
 
 if __name__ == "__main__":
     app = Aplicacion()
-    """
-    # ejemplo rápido
-    a = app.modelo.agregar_nodo(180, 220, "N0")
-    b = app.modelo.agregar_nodo(300, 170, "N1")
-    c = app.modelo.agregar_nodo(300, 300, "N2")
-    d = app.modelo.agregar_nodo(460, 180, "N5")
-    e = app.modelo.agregar_nodo(460, 330, "N3")
-    f = app.modelo.agregar_nodo(620, 250, "N4")
-    app.modelo.agregar_arco(a,b,2)
-    app.modelo.agregar_arco(a,c,3)
-    app.modelo.agregar_arco(b,d,2)
-    app.modelo.agregar_arco(c,d,4)
-    app.modelo.agregar_arco(d,f,3)
-    app.modelo.agregar_arco(e,f,2)
-    app.modelo.agregar_arco(c,e,3)
-    app.id_inicio = a; app.id_destino = f
-    """
     app.redibujar()
     app.mainloop()
