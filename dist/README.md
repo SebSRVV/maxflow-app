@@ -88,3 +88,67 @@ Aplicacion de escritorio (Tkinter) para **construir grafos** y **calcular el flu
     { "u": 0, "v": 1, "capacidad": 10.0 }
   ]
 }
+```
+
+## Arquitectura del código
+
+La aplicación está organizada en tres componentes principales más un sistema de transformaciones para zoom y pan:
+
+### 1) `FlujoMaximoEK`: algoritmo Edmonds–Karp
+- Implementa el cálculo de flujo máximo mediante BFS sobre la red residual.  
+- **Estructuras principales:**
+  - `residual`: lista de diccionarios con capacidades residuales.
+  - `original`: grafo inicial para reconstruir flujos al final.  
+- **Métodos clave:**
+  - `agregar_arco(u,v,cap)`: agrega un arco al grafo.
+  - `_bfs(s,t)`: busca un camino aumentante.
+  - `maximo_flujo(s,t)`: ejecuta el ciclo Edmonds–Karp, devuelve valor total, mapa de flujos y lista de iteraciones.
+  - `alcanzables_en_residual(residual, s)`: obtiene el conjunto alcanzable desde `s` (útil para corte mínimo).
+
+### 2) `ModeloGrafo`: modelo de datos
+- Representa el grafo como listas de nodos y arcos.  
+- **Estructuras:**
+  - `nodos`: lista `(x, y, nombre)` en coordenadas de mundo.
+  - `arcos`: lista `(u, v, capacidad)`.
+  - `nombre_a_id`: diccionario para búsqueda rápida de nodos.  
+- **Funciones principales:**
+  - Añadir, mover, renombrar y eliminar nodos.
+  - Añadir, actualizar y eliminar arcos.
+  - Importar/exportar grafo en formato JSON.
+
+### 3) `Aplicacion (Tk)`: interfaz gráfica
+- Ventana principal con **Canvas** para dibujar grafo y panel lateral de controles.  
+- **Responsabilidades:**
+  - Gestión de modos de interacción (agregar/mover/eliminar/renombrar).
+  - Dibujar nodos, arcos, capacidades, flujos y corte mínimo.
+  - Mostrar resultados de iteraciones y resúmenes de rutas.
+  - Manejar eventos de teclado y mouse.  
+- **Estados importantes:**
+  - `id_inicio`, `id_destino`: origen y destino para el flujo máximo.
+  - `ultimo_flujo`, `ultimo_valor`, `iteraciones`: resultados del cálculo.
+  - `corte_S`: conjunto de nodos alcanzables para visualizar el corte mínimo.
+
+### 4) Sistema de transformaciones (zoom & pan)
+- Permite navegar el lienzo de forma interactiva.  
+- **Variables:**
+  - `zoom`: factor de escala.
+  - `offset`: desplazamiento del lienzo.  
+- **Funciones:**
+  - `w2s(x,y)`: convierte coordenadas de **mundo → pantalla**.
+  - `s2w(sx,sy)`: convierte coordenadas de **pantalla → mundo**.  
+- **Eventos soportados:**
+  - Rueda del mouse para zoom.
+  - Botón medio/derecho o espacio + arrastre para paneo.
+  - Teclas `+` y `-` para zoom centrado en el canvas.
+
+---
+
+## Desarrollado por
+
+**Sebastián Rojas**  
+Código: **U202110299**  
+Universidad / UPC
+
+Grupo: **2**
+
+Año: 2025  
