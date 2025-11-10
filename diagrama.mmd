@@ -1,0 +1,90 @@
+flowchart TB
+    A0[Iniciar programa] --> A1[Crear Aplicacion Tk]
+    A1 --> A2[Construir UI panel<br/>canvas<br/>combos<br/>botones]
+    A2 --> A3[Vincular eventos clicks<br/>teclado<br/>rueda]
+    A3 --> A4[Redibujar]
+    A4 --> L0{Evento de usuario}
+
+    L0 -->|Modo: Anadir nodo| N1[Click en lienzo]
+    N1 --> N2[modelo.agregar_nodo x y]
+    N2 --> UI1[Limpiar resultados y redibujar]
+    UI1 --> L0
+
+    L0 -->|Modo: Mover nodo| M1[Arrastrar nodo]
+    M1 --> M2[modelo.mover_nodo id x y]
+    M2 --> A4
+
+    L0 -->|Modo: Anadir arco| E0[Click nodo origen]
+    E0 --> E1[Click nodo destino distinto a origen]
+    E1 --> E2[Validar capacidad mayor a 0]
+    E2 -->|OK| E3{Existe arco opuesto}
+    E3 -->|Si| E3e[Error no se permiten sentidos opuestos]
+    E3e --> L0
+    E3 -->|No| E4[modelo.agregar_arco u a v cap<br/>acumula si ya existe]
+    E4 --> UI2[Limpiar resultados y redibujar]
+    UI2 --> L0
+    E2 -->|Error| E2e[Mensaje capacidad invalida]
+    E2e --> L0
+
+    L0 -->|Modo: Eliminar| D0[Click en nodo o arista]
+    D0 --> D1{Confirmar}
+    D1 -->|Si| D2[Eliminar del modelo]
+    D2 --> UI3[Limpiar resultados y redibujar]
+    UI3 --> L0
+    D1 -->|No| L0
+
+    L0 -->|Modo: Renombrar| R0[Dialogo nuevo nombre]
+    R0 --> R1[modelo.renombrar_nodo]
+    R1 --> A4
+    A4 --> L0
+
+    L0 -->|Elegir inicio o destino| ID1[Combobox y botones]
+    ID1 --> A4
+    A4 --> L0
+
+    L0 -->|Abrir JSON| F1[modelo.importar_json]
+    F1 --> F1a{Arcos opuestos detectados}
+    F1a -->|Si| F1b[Advertir y limpiar opuestos]
+    F1a -->|No| F1c[Continuar]
+    F1b --> F2[Reset inicio destino y resultados]
+    F1c --> F2
+    F2 --> A4
+    A4 --> L0
+
+    L0 -->|Guardar JSON| G1[modelo.exportar_json]
+    G1 --> L0
+
+    L0 -->|Exportar CSV| G2[Escribir arcos flujo total<br/>Pesos Rutas]
+    G2 --> L0
+
+    L0 -->|Limpiar lienzo| CL1[Reset resultados y zoom pan]
+    CL1 --> A4
+    A4 --> L0
+
+    L0 -->|Nuevo| Nw1[Vaciar modelo]
+    Nw1 --> ResetA[Reset inicio destino resultados]
+    ResetA --> A4
+    A4 --> L0
+
+    L0 -->|Calcular Flujo Maximo| C0[Validar s y t definidos]
+    C0 --> C0e{s y t}
+    C0e -->|No| C0x[Warning seleccionar inicio y destino]
+    C0x --> L0
+    C0e -->|Si| C1[Construir EK con n nodos<br/>agregar_arco u a v cap]
+
+    C1 --> LOOP{BFS s a t en residual<br/>capacidad mayor a 0}
+    LOOP -->|No| C8[Terminar iteraciones]
+    C8 --> C9[Mapa de flujo desde residual y opuestas]
+    LOOP -->|Si| C3[Cuello igual a minima capacidad del camino]
+    C3 --> C4[Actualizar residual<br/>resta u a v suma v a u]
+    C4 --> C5[Guardar iteracion camino y cuello]
+    C5 --> LOOP
+
+    C9 --> C10[Valor total suma de flujo que sale de s]
+    C10 --> UIEK[Actualizar UI resultado Pesos Rutas Corte minimo]
+    UIEK --> A4
+    A4 --> C11{Valor total mayor a 0}
+    C11 -->|No| UIN[Estado no hay camino disponible]
+    UIN --> L0
+    C11 -->|Si| UIY[Estado flujo maximo calculado]
+    UIY --> L0
