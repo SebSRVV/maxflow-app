@@ -120,6 +120,18 @@ class ModeloGrafo:
     def agregar_arco(self, u, v, cap):
         if u == v:
             raise ValueError("No se permiten lazos")
+        if float(cap) <= 0:
+            raise ValueError("La capacidad debe ser > 0")
+
+        # Bloquear la existencia simultánea de u→v y v→u
+        for (a, b, c) in self.arcos:
+            if a == v and b == u:
+                raise ValueError(
+                    f"Ya existe el arco {self.nodos[v][2]} → {self.nodos[u][2]}. "
+                    "No se permiten arcos en ambos sentidos entre los mismos nodos."
+                )
+
+        # Si u→v ya existe, acumular capacidad
         for i,(a,b,c) in enumerate(self.arcos):
             if a==u and b==v:
                 self.arcos[i]=(a,b,c+float(cap)); return
@@ -146,12 +158,44 @@ class ModeloGrafo:
         self.nodos, self.nombre_a_id = [], {}
         for nd in datos.get("nodos",[]):
             self.agregar_nodo(nd["x"], nd["y"], nd["nombre"])
-        self.arcos = [(int(ed["u"]), int(ed["v"]), float(ed["capacidad"])) for ed in datos.get("arcos",[])]
+
+        # Carga cruda
+        crudos = [(int(ed["u"]), int(ed["v"]), float(ed["capacidad"])) for ed in datos.get("arcos",[])]
+
+        # Filtrar pares opuestos y acumular duplicados
+        vistos = set()
+        opuestos_eliminados = []
+        self.arcos = []
+        for (u, v, c) in crudos:
+            if (v, u) in vistos:
+                opuestos_eliminados.append((u, v, c))
+                continue
+            # acumular si ya hay u→v
+            unido = False
+            for i, (a, b, cap) in enumerate(self.arcos):
+                if a == u and b == v:
+                    self.arcos[i] = (a, b, cap + c)
+                    unido = True
+                    break
+            if not unido:
+                self.arcos.append((u, v, c))
+            vistos.add((u, v))
+
         self.siguiente_idx_nombre = 0
         for _,_,nombre in self.nodos:
             if nombre.startswith("N"):
                 try: self.siguiente_idx_nombre = max(self.siguiente_idx_nombre, int(nombre[1:])+1)
                 except: pass
+
+        if opuestos_eliminados:
+            try:
+                messagebox.showwarning(
+                    "Arcos opuestos eliminados",
+                    "Se detectaron arcos en ambos sentidos entre los mismos nodos y fueron eliminados "
+                    "(se conservó el primero encontrado)."
+                )
+            except:
+                print("[ADVERTENCIA] Se eliminaron arcos opuestos en la importación.")
 
 
 # interfaz tkinter
@@ -219,8 +263,17 @@ class Aplicacion(tk.Tk):
         lateral = ttk.Frame(self, padding=(12,10)); lateral.grid(row=0, column=1, sticky="ns")
         lateral.columnconfigure(0, weight=1)
 
+        # Cabecera
         ttk.Label(lateral, text="Controles", style="Titulo.TLabel").grid(row=0, column=0, sticky="w", pady=(0,8))
 
+        # Estado y tip
+        self.lbl_estado = ttk.Label(lateral, text="Listo.", style="Resultado.TLabel")
+        self.lbl_estado.grid(row=1, column=0, sticky="w", pady=(0,6))
+
+        self.lbl_tip = ttk.Label(lateral, text="", style="Tag.TLabel")
+        self.lbl_tip.grid(row=2, column=0, sticky="w", pady=(0,2))
+
+        # Modos
         self.modo_var = tk.StringVar(value="agregar_nodo")
         for i,(txt,val) in enumerate([
             ("➕ Añadir nodo (click lienzo)", "agregar_nodo"),
@@ -228,57 +281,57 @@ class Aplicacion(tk.Tk):
             ("➡️ Añadir arco (inicio→destino)", "agregar_arco"),
             ("🗑️ Eliminar (nodo/arco)", "eliminar"),
             ("✏️ Renombrar nodo", "renombrar"),
-        ], start=1):
-            ttk.Radiobutton(lateral, text=txt, value=val, variable=self.modo_var).grid(row=i, column=0, sticky="w")
+        ], start=3):
+            ttk.Radiobutton(lateral, text=txt, value=val, variable=self.modo_var, command=self._on_modo_cambiado).grid(row=i, column=0, sticky="w")
 
-        ttk.Separator(lateral).grid(row=7, column=0, sticky="ew", pady=8)
+        ttk.Separator(lateral).grid(row=8, column=0, sticky="ew", pady=8)
 
-        cap_fr = ttk.Frame(lateral); cap_fr.grid(row=8, column=0, sticky="ew", pady=(0,6))
+        cap_fr = ttk.Frame(lateral); cap_fr.grid(row=9, column=0, sticky="ew", pady=(0,6))
         ttk.Label(cap_fr, text="Capacidad por defecto:").grid(row=0, column=0, sticky="w")
         self.entrada_capacidad = ttk.Entry(cap_fr, width=10)
         self.entrada_capacidad.grid(row=0, column=1, padx=(6,0))
         self.entrada_capacidad.insert(0, "10")
 
-        ttk.Separator(lateral).grid(row=9, column=0, sticky="ew", pady=8)
+        ttk.Separator(lateral).grid(row=10, column=0, sticky="ew", pady=8)
 
-        ttk.Label(lateral, text="Inicio / Destino", style="Titulo.TLabel").grid(row=10, column=0, sticky="w")
-        r1 = ttk.Frame(lateral); r1.grid(row=11, column=0, sticky="ew", pady=2)
+        ttk.Label(lateral, text="Inicio / Destino", style="Titulo.TLabel").grid(row=11, column=0, sticky="w")
+        r1 = ttk.Frame(lateral); r1.grid(row=12, column=0, sticky="ew", pady=2)
         self.combo_inicio = ttk.Combobox(r1, state="readonly"); self.combo_inicio.grid(row=0, column=0, padx=(0,6))
         ttk.Button(r1, text="🚩 Establecer Inicio", command=self.establecer_inicio).grid(row=0, column=1)
-        r2 = ttk.Frame(lateral); r2.grid(row=12, column=0, sticky="ew", pady=2)
+        r2 = ttk.Frame(lateral); r2.grid(row=13, column=0, sticky="ew", pady=2)
         self.combo_destino = ttk.Combobox(r2, state="readonly"); self.combo_destino.grid(row=0, column=0, padx=(0,6))
         ttk.Button(r2, text="🏁 Establecer Destino", command=self.establecer_destino).grid(row=0, column=1)
 
-        ttk.Button(lateral, text="▶ Calcular Flujo Máximo", command=self.calcular_flujo_maximo).grid(row=13, column=0, sticky="ew", pady=(8,4))
+        ttk.Button(lateral, text="▶ Calcular Flujo Máximo", command=self.calcular_flujo_maximo).grid(row=14, column=0, sticky="ew", pady=(8,4))
         self.lbl_resultado = ttk.Label(lateral, text="Flujo máximo: —", style="Resultado.TLabel")
-        self.lbl_resultado.grid(row=14, column=0, sticky="w", pady=(0,4))
+        self.lbl_resultado.grid(row=15, column=0, sticky="w", pady=(0,4))
 
-        ttk.Label(lateral, text="Pesos:", style="Tag.TLabel").grid(row=15, column=0, sticky="w")
+        ttk.Label(lateral, text="Pesos:", style="Tag.TLabel").grid(row=16, column=0, sticky="w")
         self.lbl_pesos = ttk.Label(lateral, text="—", style="Tag.TLabel")
-        self.lbl_pesos.grid(row=16, column=0, sticky="w")
+        self.lbl_pesos.grid(row=17, column=0, sticky="w")
         self.lbl_total = ttk.Label(lateral, text="", style="Rojo.TLabel")
-        self.lbl_total.grid(row=17, column=0, sticky="w", pady=(0,6))
+        self.lbl_total.grid(row=18, column=0, sticky="w", pady=(0,6))
 
-        ttk.Label(lateral, text="Arcos (u → v, capacidad)", style="Titulo.TLabel").grid(row=18, column=0, sticky="w", pady=(8,2))
+        ttk.Label(lateral, text="Arcos (u → v, capacidad)", style="Titulo.TLabel").grid(row=19, column=0, sticky="w", pady=(8,2))
         self.tabla = ttk.Treeview(lateral, columns=("u","v","cap"), show="headings", height=12)
         for col,txt,w in [("u","u",90),("v","v",90),("cap","Capacidad",110)]:
             self.tabla.heading(col, text=txt); self.tabla.column(col, width=w, anchor="center" if col!="cap" else "e")
-        self.tabla.grid(row=19, column=0, sticky="ew")
+        self.tabla.grid(row=20, column=0, sticky="ew")
         self.tabla.bind("<Double-1>", self._editar_capacidad_dialogo)
 
-        ttk.Separator(lateral).grid(row=20, column=0, sticky="ew", pady=8)
+        ttk.Separator(lateral).grid(row=21, column=0, sticky="ew", pady=8)
 
-        f = ttk.Frame(lateral); f.grid(row=21, column=0, sticky="ew")
+        f = ttk.Frame(lateral); f.grid(row=22, column=0, sticky="ew")
         ttk.Button(f, text="🆕 Nuevo", command=self.nuevo_grafo).grid(row=0, column=0, padx=2)
         ttk.Button(f, text="📂 Abrir JSON", command=self.abrir_json).grid(row=0, column=1, padx=2)
         ttk.Button(f, text="💾 Guardar JSON", command=self.guardar_json).grid(row=0, column=2, padx=2)
         ttk.Button(f, text="📤 Exportar CSV (flujo)", command=self.exportar_csv).grid(row=0, column=3, padx=2)
 
-        ley = ttk.Frame(lateral); ley.grid(row=22, column=0, sticky="ew", pady=(8,0))
+        ley = ttk.Frame(lateral); ley.grid(row=23, column=0, sticky="ew", pady=(8,0))
         ttk.Label(ley, text="🚩 Inicio   🏁 Destino   📦 Intermedio", style="Tag.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(ley, text="naranja: con flujo  •  gris: sin flujo  •  linea punteada: corte minimo  •  rueda: zoom  •  medio/derecho o espacio+izquierdo: pan", style="Tag.TLabel").grid(row=1, column=0, sticky="w")
 
-        ttk.Button(lateral, text="🔎 Ver todas las rutas (resumen)", command=self.mostrar_rutas).grid(row=23, column=0, sticky="w", pady=(10,0))
+        ttk.Button(lateral, text="🔎 Ver todas las rutas (resumen)", command=self.mostrar_rutas).grid(row=24, column=0, sticky="w", pady=(10,0))
 
     def _vincular_eventos(self):
         # click izquierdo habitual
@@ -307,6 +360,34 @@ class Aplicacion(tk.Tk):
         # paneo con espacio: presionar y soltar
         self.bind("<KeyPress-space>", self._space_press)
         self.bind("<KeyRelease-space>", self._space_release)
+
+    # Helpers de feedback
+    def _estado(self, msg):
+        if hasattr(self, "lbl_estado"):
+            self.lbl_estado.config(text=msg)
+
+    def _tip(self, msg=""):
+        if hasattr(self, "lbl_tip"):
+            self.lbl_tip.config(text=msg)
+
+    def _on_modo_cambiado(self):
+        m = self.modo_var.get()
+        self.arco_pendiente_desde = None
+        if m == "agregar_nodo":
+            self._estado("Modo: Añadir nodo")
+            self._tip("Click en el lienzo para crear un nodo.")
+        elif m == "mover_nodo":
+            self._estado("Modo: Mover nodo")
+            self._tip("Arrastra un nodo para reposicionarlo.")
+        elif m == "agregar_arco":
+            self._estado("Modo: Añadir arco")
+            self._tip("Click en el nodo origen y luego en el nodo destino.")
+        elif m == "eliminar":
+            self._estado("Modo: Eliminar")
+            self._tip("Click sobre un nodo o sobre una arista para eliminar.")
+        elif m == "renombrar":
+            self._estado("Modo: Renombrar")
+            self._tip("Click sobre un nodo para renombrarlo.")
 
     # grafico
     def _dibujar_cuadricula(self):
@@ -491,22 +572,55 @@ class Aplicacion(tk.Tk):
                 wx, wy = self.s2w(e.x, e.y)
                 self.modelo.agregar_nodo(wx, wy, None)
                 self._limpiar_resultados(); self.redibujar()
-            except Exception as ex: messagebox.showerror("Error", str(ex))
+                self._estado("Nodo creado.")
+                self._tip("Cámbialo de posición con 'Mover nodo' si lo necesitas.")
+            except Exception as ex:
+                messagebox.showerror("Error", str(ex))
+                self._estado("No se pudo crear el nodo.")
         elif modo == "agregar_arco":
             nid = self._buscar_nodo_en(e.x, e.y)
-            if nid is None: return
+            if nid is None:
+                if self.arco_pendiente_desde is not None:
+                    self._estado("Selección de arco cancelada.")
+                    self._tip("Vuelve a elegir origen y destino.")
+                    self.arco_pendiente_desde = None
+                return
             if self.arco_pendiente_desde is None:
                 self.arco_pendiente_desde = nid
                 self.lbl_resultado.config(text=f"Elige destino desde {self.modelo.nodos[nid][2]}")
+                self._estado(f"Origen: {self.modelo.nodos[nid][2]} seleccionado.")
+                self._tip("Ahora haz click en el nodo destino.")
             else:
                 if nid == self.arco_pendiente_desde:
-                    self.arco_pendiente_desde = None; return
+                    self.arco_pendiente_desde = None
+                    self._estado("Selección de arco cancelada.")
+                    self._tip("Elige origen y un destino distinto.")
+                    return
+                # Validación amable de capacidad
                 try:
-                    cap = float(self.entrada_capacidad.get())
+                    cap_str = self.entrada_capacidad.get().strip()
+                    if not cap_str:
+                        raise ValueError("Ingrese una capacidad.")
+                    cap = float(cap_str)
+                    if cap <= 0:
+                        raise ValueError("La capacidad debe ser > 0")
+                except Exception as ex:
+                    messagebox.showerror("Capacidad inválida", str(ex))
+                    self._estado("No se pudo crear el arco.")
+                    self.arco_pendiente_desde = None
+                    self._tip("Intenta nuevamente: elige origen y destino.")
+                    return
+                try:
                     self.modelo.agregar_arco(self.arco_pendiente_desde, nid, cap)
+                    self._estado(f"Arco creado: {self.modelo.nodos[self.arco_pendiente_desde][2]} → {self.modelo.nodos[nid][2]} ({cap:g})")
+                    self._tip("Puedes crear otro arco o cambiar de modo.")
                     self.arco_pendiente_desde = None
                     self._limpiar_resultados(); self.redibujar()
-                except Exception as ex: messagebox.showerror("Error", str(ex))
+                except Exception as ex:
+                    messagebox.showerror("Error al crear arco", str(ex))
+                    self._estado("No se pudo crear el arco.")
+                    self.arco_pendiente_desde = None
+                    self._tip("Verifica que no exista un arco en sentido contrario.")
         elif modo == "mover_nodo":
             self.nodo_arrastre = self._buscar_nodo_en(e.x, e.y)
             if self.nodo_arrastre is not None:
@@ -521,6 +635,8 @@ class Aplicacion(tk.Tk):
                     if self.id_inicio == nid: self.id_inicio=None
                     if self.id_destino == nid: self.id_destino=None
                     self._limpiar_resultados(); self.redibujar()
+                    self._estado("Elemento eliminado.")
+                    self._tip("")
                 return
             ed = self._buscar_arco_en(e.x, e.y)
             if ed:
@@ -528,6 +644,8 @@ class Aplicacion(tk.Tk):
                 if messagebox.askyesno("Eliminar arco", f"¿Eliminar {self.modelo.nodos[u][2]} → {self.modelo.nodos[v][2]}?"):
                     self.modelo.eliminar_arco(u,v)
                     self._limpiar_resultados(); self.redibujar()
+                    self._estado("Elemento eliminado.")
+                    self._tip("")
         elif modo == "renombrar":
             nid = self._buscar_nodo_en(e.x, e.y)
             if nid is not None: self._dialogo_renombrar_nodo(nid)
@@ -619,6 +737,8 @@ class Aplicacion(tk.Tk):
             if not nuevo: messagebox.showerror("Error", "Nombre vacío"); return
             try:
                 self.modelo.renombrar_nodo(nid, nuevo); self.redibujar(); win.destroy()
+                self._estado("Nodo renombrado.")
+                self._tip("")
             except Exception as ex: messagebox.showerror("Error", str(ex))
         ttk.Button(win, text="Guardar", command=ok).grid(row=1, column=0, columnspan=2, pady=8)
 
@@ -641,6 +761,8 @@ class Aplicacion(tk.Tk):
                 if nueva <= 0: raise ValueError("Capacidad > 0")
                 self.modelo.actualizar_capacidad(u, v, nueva)
                 self._limpiar_resultados(); self.redibujar(); win.destroy()
+                self._estado("Capacidad actualizada.")
+                self._tip("Vuelve a calcular si quieres ver el impacto en el flujo.")
             except Exception as ex: messagebox.showerror("Error", str(ex))
         ttk.Button(win, text="Guardar", command=ok).grid(row=2, column=0, columnspan=2, pady=8)
 
@@ -651,6 +773,8 @@ class Aplicacion(tk.Tk):
         nid = self.modelo.nombre_a_id.get(nombre)
         if nid is None: messagebox.showerror("Error", "Nombre de inicio no válido."); return
         self.id_inicio = nid; self.redibujar()
+        self._estado(f"Inicio: {nombre}")
+        self._tip("")
 
     def establecer_destino(self):
         nombre = self.combo_destino.get()
@@ -658,6 +782,8 @@ class Aplicacion(tk.Tk):
         nid = self.modelo.nombre_a_id.get(nombre)
         if nid is None: messagebox.showerror("Error", "Nombre de destino no válido."); return
         self.id_destino = nid; self.redibujar()
+        self._estado(f"Destino: {nombre}")
+        self._tip("")
 
     def _ruta_de_iteracion(self, it):
         nombres = [self.modelo.nodos[u][2] for (u, _) in it["camino"]]
@@ -704,7 +830,10 @@ class Aplicacion(tk.Tk):
 
     def calcular_flujo_maximo(self):
         if self.id_inicio is None or self.id_destino is None:
-            messagebox.showwarning("Faltan datos", "Selecciona Inicio y Destino."); return
+            messagebox.showwarning("Faltan datos", "Selecciona Inicio y Destino.")
+            self._estado("Selecciona inicio y destino para calcular.")
+            self._tip("Usa las listas desplegables del panel derecho.")
+            return
         n = len(self.modelo.nodos)
         ek = FlujoMaximoEK(n)
         for (u,v,c) in self.modelo.arcos: ek.agregar_arco(u,v,c)
@@ -717,19 +846,35 @@ class Aplicacion(tk.Tk):
             self._actualizar_desglose_panel()
             self.corte_S = FlujoMaximoEK.alcanzables_en_residual(ek.residual, self.id_inicio)
             self.redibujar()
+            if valor <= 1e-12:
+                self._estado("No existe camino s→t con capacidad disponible.")
+                self._tip("Añade arcos o revisa las capacidades.")
+            else:
+                self._estado("¡Flujo máximo calculado!")
+                self._tip("Usa 'Ver todas las rutas' para ver el desglose.")
         except Exception as ex:
             messagebox.showerror("Error", str(ex))
+            self._estado("No se pudo calcular el flujo.")
+            self._tip("Revisa el grafo y vuelve a intentar.")
 
     def nuevo_grafo(self):
         if not messagebox.askyesno("Nuevo", "¿Vaciar el grafo actual?"): return
         self.modelo = ModeloGrafo(); self.id_inicio=None; self.id_destino=None
         self._limpiar_resultados(); self.redibujar()
+        self._estado("Grafo vacío creado.")
+        self._tip("Añade nodos con 'Añadir nodo'.")
 
     def guardar_json(self):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON","*.json")], title="Guardar grafo")
         if not path: return
-        try: self.modelo.exportar_json(path); messagebox.showinfo("Guardado","Grafo guardado.")
-        except Exception as ex: messagebox.showerror("Error", str(ex))
+        try:
+            self.modelo.exportar_json(path);
+            messagebox.showinfo("Guardado","Grafo guardado.")
+            self._estado("Grafo guardado correctamente.")
+            self._tip("")
+        except Exception as ex:
+            messagebox.showerror("Error", str(ex))
+            self._estado("No se pudo guardar el grafo.")
 
     def abrir_json(self):
         path = filedialog.askopenfilename(filetypes=[("JSON","*.json")], title="Abrir grafo")
@@ -738,12 +883,18 @@ class Aplicacion(tk.Tk):
             self.modelo.importar_json(path)
             self.id_inicio=None; self.id_destino=None
             self._limpiar_resultados(); self.redibujar()
+            self._estado("Grafo cargado.")
+            self._tip("Selecciona inicio y destino si quieres calcular el flujo.")
         except Exception as ex:
             messagebox.showerror("Error", str(ex))
+            self._estado("No se pudo abrir el archivo.")
 
     def exportar_csv(self):
         if not self.ultimo_flujo:
-            messagebox.showwarning("Sin resultados","Primero calcula el flujo máximo."); return
+            messagebox.showwarning("Sin resultados","Primero calcula el flujo máximo.");
+            self._estado("No hay resultados para exportar.")
+            self._tip("Calcula el flujo y vuelve a intentar.")
+            return
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV","*.csv")], title="Exportar flujo")
         if not path: return
         try:
@@ -759,9 +910,11 @@ class Aplicacion(tk.Tk):
                     w.writerow(["+", *[f"{it['cuello']:g}" for it in self.iteraciones]])
                     w.writerow(["Total", f"{sum(it['cuello'] for it in self.iteraciones):g}"])
             messagebox.showinfo("Exportado", "CSV exportado correctamente.")
+            self._estado("CSV exportado correctamente.")
+            self._tip("")
         except Exception as ex:
             messagebox.showerror("Error", str(ex))
-
+            self._estado("No se pudo exportar el CSV.")
 
 if __name__ == "__main__":
     app = Aplicacion()
