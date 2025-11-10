@@ -123,7 +123,7 @@ class ModeloGrafo:
         if float(cap) <= 0:
             raise ValueError("La capacidad debe ser > 0")
 
-        # Bloquear la existencia simultánea de u→v y v→u
+        # Bloquear u→v y v→u simultáneos
         for (a, b, c) in self.arcos:
             if a == v and b == u:
                 raise ValueError(
@@ -131,7 +131,7 @@ class ModeloGrafo:
                     "No se permiten arcos en ambos sentidos entre los mismos nodos."
                 )
 
-        # Si u→v ya existe, acumular capacidad
+        # Acumular si u→v ya existe
         for i,(a,b,c) in enumerate(self.arcos):
             if a==u and b==v:
                 self.arcos[i]=(a,b,c+float(cap)); return
@@ -170,7 +170,6 @@ class ModeloGrafo:
             if (v, u) in vistos:
                 opuestos_eliminados.append((u, v, c))
                 continue
-            # acumular si ya hay u→v
             unido = False
             for i, (a, b, cap) in enumerate(self.arcos):
                 if a == u and b == v:
@@ -312,26 +311,37 @@ class Aplicacion(tk.Tk):
         self.lbl_total = ttk.Label(lateral, text="", style="Rojo.TLabel")
         self.lbl_total.grid(row=18, column=0, sticky="w", pady=(0,6))
 
-        ttk.Label(lateral, text="Arcos (u → v, capacidad)", style="Titulo.TLabel").grid(row=19, column=0, sticky="w", pady=(8,2))
-        self.tabla = ttk.Treeview(lateral, columns=("u","v","cap"), show="headings", height=12)
+        # NUEVO: Rutas debajo de Pesos
+        ttk.Label(lateral, text="Rutas:", style="Tag.TLabel").grid(row=19, column=0, sticky="w")
+        self.tabla_rutas = ttk.Treeview(lateral, columns=("ruta","peso"), show="headings", height=6)
+        self.tabla_rutas.heading("ruta", text="Ruta")
+        self.tabla_rutas.heading("peso", text="Peso")
+        self.tabla_rutas.column("ruta", width=360, anchor="w")
+        self.tabla_rutas.column("peso", width=90, anchor="e")
+        self.tabla_rutas.grid(row=20, column=0, sticky="ew", pady=(2,6))
+
+        ttk.Label(lateral, text="Arcos (u → v, capacidad)", style="Titulo.TLabel").grid(row=21, column=0, sticky="w", pady=(8,2))
+        self.tabla = ttk.Treeview(lateral, columns=("u","v","cap"), show="headings", height=10)
         for col,txt,w in [("u","u",90),("v","v",90),("cap","Capacidad",110)]:
             self.tabla.heading(col, text=txt); self.tabla.column(col, width=w, anchor="center" if col!="cap" else "e")
-        self.tabla.grid(row=20, column=0, sticky="ew")
+        self.tabla.grid(row=22, column=0, sticky="ew")
         self.tabla.bind("<Double-1>", self._editar_capacidad_dialogo)
 
-        ttk.Separator(lateral).grid(row=21, column=0, sticky="ew", pady=8)
+        ttk.Separator(lateral).grid(row=23, column=0, sticky="ew", pady=8)
 
-        f = ttk.Frame(lateral); f.grid(row=22, column=0, sticky="ew")
+        f = ttk.Frame(lateral); f.grid(row=24, column=0, sticky="ew")
         ttk.Button(f, text="🆕 Nuevo", command=self.nuevo_grafo).grid(row=0, column=0, padx=2)
         ttk.Button(f, text="📂 Abrir JSON", command=self.abrir_json).grid(row=0, column=1, padx=2)
         ttk.Button(f, text="💾 Guardar JSON", command=self.guardar_json).grid(row=0, column=2, padx=2)
         ttk.Button(f, text="📤 Exportar CSV (flujo)", command=self.exportar_csv).grid(row=0, column=3, padx=2)
+        # NUEVO: Limpiar lienzo (resultados/zoom)
+        ttk.Button(f, text="🧹 Limpiar lienzo", command=self.limpiar_lienzo).grid(row=0, column=4, padx=2)
 
-        ley = ttk.Frame(lateral); ley.grid(row=23, column=0, sticky="ew", pady=(8,0))
+        ley = ttk.Frame(lateral); ley.grid(row=25, column=0, sticky="ew", pady=(8,0))
         ttk.Label(ley, text="🚩 Inicio   🏁 Destino   📦 Intermedio", style="Tag.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(ley, text="naranja: con flujo  •  gris: sin flujo  •  linea punteada: corte minimo  •  rueda: zoom  •  medio/derecho o espacio+izquierdo: pan", style="Tag.TLabel").grid(row=1, column=0, sticky="w")
 
-        ttk.Button(lateral, text="🔎 Ver todas las rutas (resumen)", command=self.mostrar_rutas).grid(row=24, column=0, sticky="w", pady=(10,0))
+        ttk.Button(lateral, text="🔎 Ver todas las rutas (resumen)", command=self.mostrar_rutas).grid(row=26, column=0, sticky="w", pady=(10,0))
 
     def _vincular_eventos(self):
         # click izquierdo habitual
@@ -513,6 +523,17 @@ class Aplicacion(tk.Tk):
         for i in self.tabla.get_children(): self.tabla.delete(i)
         for (u,v,c) in self.modelo.arcos:
             self.tabla.insert("", "end", values=(self.modelo.nodos[u][2], self.modelo.nodos[v][2], f"{c:g}"))
+
+    # NUEVO: refrescar la tabla de rutas (iteraciones)
+    def _refrescar_tabla_rutas(self):
+        if not hasattr(self, "tabla_rutas"):
+            return
+        for i in self.tabla_rutas.get_children():
+            self.tabla_rutas.delete(i)
+        # mostrar cada iteración con su ruta y cuello
+        for it in self.iteraciones:
+            ruta = self._ruta_de_iteracion(it)
+            self.tabla_rutas.insert("", "end", values=(ruta, f"{it['cuello']:g}"))
 
     # corte minimo en mundo
     def _linea_corte_mediatriz(self, Sset):
@@ -792,11 +813,15 @@ class Aplicacion(tk.Tk):
 
     def _actualizar_desglose_panel(self):
         if not self.iteraciones:
-            self.lbl_pesos.config(text="—"); self.lbl_total.config(text=""); return
+            self.lbl_pesos.config(text="—"); self.lbl_total.config(text="")
+            self._refrescar_tabla_rutas()
+            return
         partes = " + ".join(f"{it['cuello']:g}" for it in self.iteraciones)
         total = sum(it["cuello"] for it in self.iteraciones)
         self.lbl_pesos.config(text=partes)
         self.lbl_total.config(text=f"Total: {total:g}")
+        # NUEVO: también refrescar “Rutas”
+        self._refrescar_tabla_rutas()
 
     def mostrar_rutas(self):
         if not self.iteraciones:
@@ -827,6 +852,17 @@ class Aplicacion(tk.Tk):
         self.corte_S = set(); self.corte_linea = None
         self.lbl_resultado.config(text="Flujo máximo: —")
         self.lbl_pesos.config(text="—"); self.lbl_total.config(text="")
+        self._refrescar_tabla_rutas()
+
+    def limpiar_lienzo(self):
+        """NUEVO: limpia resultados visuales y resetea vista (no borra el grafo)."""
+        self._limpiar_resultados()
+        # reset de zoom/pan
+        self.zoom = 1.0
+        self.offset = [0.0, 0.0]
+        self.redibujar()
+        self._estado("Lienzo limpiado (resultados y vista).")
+        self._tip("El grafo se mantiene. Usa 'Nuevo' para vaciarlo.")
 
     def calcular_flujo_maximo(self):
         if self.id_inicio is None or self.id_destino is None:
@@ -851,7 +887,7 @@ class Aplicacion(tk.Tk):
                 self._tip("Añade arcos o revisa las capacidades.")
             else:
                 self._estado("¡Flujo máximo calculado!")
-                self._tip("Usa 'Ver todas las rutas' para ver el desglose.")
+                self._tip("Revisa “Rutas” y “Ver todas las rutas” para el desglose.")
         except Exception as ex:
             messagebox.showerror("Error", str(ex))
             self._estado("No se pudo calcular el flujo.")
@@ -909,6 +945,10 @@ class Aplicacion(tk.Tk):
                     w.writerow([]); w.writerow(["Pesos:"])
                     w.writerow(["+", *[f"{it['cuello']:g}" for it in self.iteraciones]])
                     w.writerow(["Total", f"{sum(it['cuello'] for it in self.iteraciones):g}"])
+                    # NUEVO: incluir rutas en el CSV
+                    w.writerow([]); w.writerow(["Rutas:"])
+                    for it in self.iteraciones:
+                        w.writerow([self._ruta_de_iteracion(it), f"{it['cuello']:g}"])
             messagebox.showinfo("Exportado", "CSV exportado correctamente.")
             self._estado("CSV exportado correctamente.")
             self._tip("")
